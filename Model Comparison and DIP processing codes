@@ -471,3 +471,177 @@ for images, labels in val_ds.take(1):
         plt.title(f"Actual: {class_names[labels[i]]}\nPredicted: {class_names[np.argmax(score)]}")
         plt.axis("off")
 plt.show()
+
+#Tailor Made CNN
+import os
+import random
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from tensorflow import keras
+from tensorflow.keras import layers, models
+
+def extract_images_from_subfolders(base_folder):
+    images = []
+    labels = []
+    
+    # Iterate through each subfolder in the base folder
+    for subfolder in os.listdir(base_folder):
+        subfolder_path = os.path.join(base_folder, subfolder)
+        
+        if os.path.isdir(subfolder_path):
+            # Get all image files in the subfolder
+            image_files = [f for f in os.listdir(subfolder_path) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif'))]
+            for img_file in image_files:
+                img_path = os.path.join(subfolder_path, img_file)
+                img = cv2.imread(img_path)
+                
+                # Resize the image to a consistent size
+                img = cv2.resize(img, (200, 200))  # Resize to 128x128
+                images.append(img)
+                labels.append(subfolder)  # Use the subfolder name as label
+
+    return np.array(images), np.array(labels)
+
+def apply_affine_transformation(image):
+    rows, cols, _ = image.shape
+    
+    # Define the transformation matrix (example: rotation + translation)
+    angle = random.uniform(-30, 30)  # Random angle between -30 and 30 degrees
+    scale = random.uniform(0.8, 1.2)  # Random scale between 0.8 and 1.2
+    tx = random.randint(-10, 10)  # Random translation on x-axis
+    ty = random.randint(-10, 10)  # Random translation on y-axis
+    
+    # Calculate the center of the image
+    center = (cols / 2, rows / 2)
+    
+    # Generate the transformation matrix
+    M = cv2.getRotationMatrix2D(center, angle, scale)
+    M[0, 2] += tx  # Add translation on x-axis
+    M[1, 2] += ty  # Add translation on y-axis
+
+    # Apply the affine transformation
+    transformed_image = cv2.warpAffine(image, M, (cols, rows))
+    
+    return transformed_image
+
+def augment_dataset(images, labels, specific_label, num_augmentations=5):
+    augmented_images = []
+    augmented_labels = []
+    
+    for img, label in zip(images, labels):
+        augmented_images.append(img)  # Include the original image
+        augmented_labels.append(label)
+        
+        if label == specific_label:  # Only augment images with the specific label
+            for _ in range(num_augmentations):
+                transformed_image = apply_affine_transformation(img)
+                augmented_images.append(transformed_image)
+                augmented_labels.append(label)
+    
+    return np.array(augmented_images), np.array(augmented_labels)
+
+# Set your folder path here
+folder_path = "D:\\Varshini\\VIT\\Sem 7\\DIP\\projects\\dataset_2c"
+images, labels = extract_images_from_subfolders(folder_path)
+
+specific_label = 'Clean'  # Replace with your specific label
+
+# Augment the dataset for the specified label
+augmented_images, augmented_labels = augment_dataset(images, labels, specific_label)
+
+# Combine original images with augmented images
+combined_images = np.concatenate((images, augmented_images), axis=0)
+combined_labels = np.concatenate((labels, augmented_labels), axis=0)
+
+def preprocess_images(images):
+    images = np.array([cv2.resize(img, (200, 200)) for img in images])  # Resize images
+    images = images.astype('float32') / 255.0  # Normalize images
+    return images
+
+def create_cnn_model(input_shape, num_classes):
+    model = models.Sequential([
+        layers.Conv2D(32, (3, 3), activation='relu', input_shape=input_shape),
+        layers.MaxPooling2D((2, 2)),
+
+        layers.Conv2D(64, (3, 3), activation='relu'),
+        layers.MaxPooling2D((2, 2)),
+
+        layers.Dropout(0.3),
+        layers.Conv2D(128, (3, 3), activation='relu'),
+        layers.MaxPooling2D((2, 2)),
+
+        layers.Flatten(),
+        layers.Dense(128, activation='relu'),
+        layers.Dense(num_classes, activation='softmax')
+    ])
+    return model
+
+# Encode labels
+label_names, labels_encoded = np.unique(labels, return_inverse=True)
+num_classes = len(label_names)
+
+# Split the dataset into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(images, labels_encoded, test_size=0.2, random_state=42)
+
+model = create_cnn_model(input_shape=(200, 200, 3), num_classes=num_classes)
+model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+model.fit(X_train, y_train, epochs=10, validation_split=0.2)
+
+
+loss, accuracy = model.evaluate(X_test, y_test)
+print(f'Test accuracy: {accuracy:.2f}')
+
+predictions = model.predict(X_test)
+predicted_classes = np.argmax(predictions, axis=1)
+
+for i in range(5):
+    plt.imshow(X_test[i])
+    plt.title(f'True: {label_names[y_test[i]]}, Predicted: {label_names[predicted_classes[i]]}')
+    plt.axis('off')
+    plt.show()
+
+
+## Shadow and glare removal(if needed)
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+
+def remove_glare(image_path, threshold_value=200, inpaint_radius=13):
+    # Read the image
+    img = cv2.imread(image_path)
+
+    # Convert to grayscale
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # Create a mask where glare regions are white (above a certain brightness threshold)
+    _, glare_mask = cv2.threshold(gray, threshold_value, 255, cv2.THRESH_BINARY)
+
+    # Inpainting: Remove glare by blending it with surrounding pixels
+    inpainted_img = cv2.inpaint(img, glare_mask, inpaint_radius, cv2.INPAINT_TELEA)
+
+    return img, inpainted_img
+
+# Usage
+image_path = 'D:\\Varshini\\VIT\\Sem 7\\DIP\\projects\\dataset\\Clean\\Clean (26).jpg'
+original_img, result_img = remove_glare(image_path)
+
+# Display the images using matplotlib
+plt.figure(figsize=(10, 5))
+
+# Display original image
+plt.subplot(1, 2, 1)
+plt.imshow(cv2.cvtColor(original_img, cv2.COLOR_BGR2RGB))  # Convert BGR to RGB for matplotlib
+plt.title("Original Image")
+plt.axis('off')  # Hide axis
+
+# Display processed image (with glare removal)
+plt.subplot(1, 2, 2)
+plt.imshow(cv2.cvtColor(result_img, cv2.COLOR_BGR2RGB))  # Convert BGR to RGB for matplotlib
+plt.title("Processed Image  (Glare Removed)")
+plt.axis('off')  # Hide axis
+
+# Show the plot
+plt.show()
+
